@@ -1,1 +1,4 @@
-
+Goals:
+ - Modify xv6 so that the pages for the kernel are shared among processes, which reduces memory consumption.
+ - Modify xv6 so that when a user program dereferences a null pointer, it will receive a fault. That is, modify xv6 virtual address 0 isn't mapped for user program.
+ 
