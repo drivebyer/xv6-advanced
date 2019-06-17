@@ -1,0 +1,77 @@
+# The xv6 kernel starts executing in this file. This file is linked with
+# the kernel C code, so it can refer to kernel symbols such as main().
+# The boot block (bootasm.S and bootmain.c) jumps to entry below.
+        
+# Multiboot header, for multiboot boot loaders like GNU Grub.
+# http://www.gnu.org/software/grub/manual/multiboot/multiboot.html
+#
+# Using GRUB 2, you can boot xv6 from a file stored in a
+# Linux file system by copying kernel or kernelmemfs to /boot
+# and then adding this menu entry:
+#
+# menuentry "xv6" {
+# 	insmod ext2
+# 	set root='(hd0,msdos1)'
+# 	set kernel='/boot/kernel'
+# 	echo "Loading ${kernel}..."
+# 	multiboot ${kernel} ${kernel}
+# 	boot
+# }
+
+#include "asm.h"
+#include "memlayout.h"
+#include "mmu.h"
+#include "param.h"
+
+# Multiboot header.  Data to direct multiboot loader.
+.p2align 2
+.text
+.globl multiboot_header
+multiboot_header:
+  #define magic 0x1badb002
+  #define flags 0
+  .long magic
+  .long flags
+  .long (-magic-flags)
+
+# By convention, the _start symbol specifies the ELF entry point.
+# Since we haven't set up virtual memory yet, our entry point is
+# the physical address of 'entry'.
+.globl _start
+_start = V2P_WO(entry)
+
+# Entering xv6 on boot processor, with paging off.
+.globl entry
+entry:
+  # Turn on page size extension for 4Mbyte pages
+  # The kernel tells the paging hardware to allow super pages by setting the CR4_PSE bit
+  # 启动PSE后, 虚拟地址的第7位被激活, page directory 直接指向 4MB 大小的 page, 而不是 page table
+  movl    %cr4, %eax
+  orl     $(CR4_PSE), %eax
+  movl    %eax, %cr4
+  # Set page directory, V2P_WO将参数减去KERNBASE, 使之成为有效的物理地址
+  movl    $(V2P_WO(entrypgdir)), %eax
+  movl    %eax, %cr3
+  # Turn on paging.
+  # xv6 sets the flag CRO_PG in %cr0, To enable the paging hardware
+  # 开启后, paging hardware将会使用entrypgdir
+  movl    %cr0, %eax
+  orl     $(CR0_PG|CR0_WP), %eax /*write protect and paging*/
+  movl    %eax, %cr0
+
+  # The processor is still executing instructions at low addresses after paging is enabled
+  # which works since entrypddir maps low addresses
+  # but entry needs to transfer to the kernel's C code, and run it in high memory
+
+  # Set up the stack pointer, %esp point to memory to be used as a stack.
+  # All symbols have high addresses, including stack so the stack will still be valid even when entry 0 are removed
+  movl $(stack + KSTACKSIZE), %esp
+
+  # Jump to main(main is at high address), and switch to executing at
+  # high addresses. The indirect call is needed because
+  # the assembler produces a PC-relative instruction
+  # for a direct jump.
+  mov $main, %eax
+  jmp *%eax
+
+.comm stack, KSTACKSIZE    # .comm declares named common area(stack) in bss section for KSTACKSIZE bytes
