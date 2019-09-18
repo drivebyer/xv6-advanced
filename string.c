@@ -55,6 +55,7 @@ memcpy(void *dst, const void *src, uint n)
   return memmove(dst, src, n);
 }
 
+/*比较两个字符串是否相等*/
 int
 strncmp(const char *p, const char *q, uint n)
 {

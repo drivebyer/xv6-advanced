@@ -41,7 +41,8 @@ idewait(int checkerr)
   int r;
   /*
    * A PC motherboard presents the status bits r of the disk hardware on I/O port 0x1f7
-   * Idewait() polls the status bits r until the busy bit(IDE_BSY) is clear and the ready bit(IDE_DRDY) is set
+   * Idewait() polls the status bits r until the busy bit(IDE_BSY) is clear and 
+   * the ready bit(IDE_DRDY) is set
    */
   while(((r = inb(0x1f7)) & (IDE_BSY|IDE_DRDY)) != IDE_DRDY)
     ;
@@ -84,7 +85,7 @@ ideinit(void)
 
 // Start the request for b.  Caller must hold idelock.
 /*
- * Idestart() issues either a read or a write for the buffer's device and sector according to the flags
+ * 这个函数执行读或者写取决于b->flags
  */
 static void
 idestart(struct buf *b)
@@ -109,17 +110,19 @@ idestart(struct buf *b)
   outb(0x1f6, 0xe0 | ((b->dev&1)<<4) | ((sector>>24)&0x0f));
   if(b->flags & B_DIRTY){
     outb(0x1f7, write_cmd);
-    outsl(0x1f0, b->data, BSIZE/4); /*move data to a buffer in the disk controller using outsl*/
+    outsl(0x1f0, b->data, BSIZE/4); /*将buffer中的数据写入磁盘*/
   } else {
-    outb(0x1f7, read_cmd);
+    outb(0x1f7, read_cmd); /*发起一个读操作，磁盘控制器有数据后，产生一个中断，让ideintr()去处理*/
   }
 }
 
 // Interrupt handler.
 /*
- * 处理来自磁盘的中断
- * ideintr() consults the first buffer in the queue to find out which operation was happening
- * */
+ * 处理来自磁盘的中断，对应队列中第一个buffer
+ * 要么是磁盘控制器上有新的数据，需要读取
+ * 要么是告诉 OS 之前的写操作已经完成
+ * 这取决于前面 iderw()-> idestart() 执行的写操作还是读操作
+ */
 void
 ideintr(void)
 {
@@ -129,26 +132,25 @@ ideintr(void)
   acquire(&idelock);
 
   if((b = idequeue) == 0){
-    release(&idelock);
+    release(&idelock); /*队列中的buffer全部处理完毕，直接返回*/
     return;
   }
-  idequeue = b->qnext;
+  idequeue = b->qnext; /*将链头指针后移，处理第一个buffer*/
 
   // Read data if needed.
   /*
-   * if the buffer was being read and the disk controller has data waiting,
-   * ideintr() reads the data from a buffer in the disk controller into memory with insl instruction
-   * */
+   * 磁盘控制器里有数据，读取到buffer中
+   */
   if(!(b->flags & B_DIRTY) && idewait(1) >= 0)
     insl(0x1f0, b->data, BSIZE/4);
 
   // Wake process waiting for this buf.
   b->flags |= B_VALID; /*set B_VALID*/
   b->flags &= ~B_DIRTY; /*clear B_DIRTY*/
-  wakeup(b); /*wake up any processes sleeping on the buffer*/
+  wakeup(b); /*通知等待的其他进程，此buffer已经处理完毕*/
 
   // Start disk on next buf in queue.
-  /*pass the next waiting buffer to the disk*/
+  /*接着处理下一个队列中的 buffer*/
   if(idequeue != 0)
     idestart(idequeue);
 
@@ -160,20 +162,17 @@ ideintr(void)
 // If B_DIRTY is set, write buf to disk, clear B_DIRTY, set B_VALID.
 // Else if B_VALID is not set, read buf from disk, set B_VALID.
 /*
- * keeeping the list of pengding disk requests in a queue 
- * and using interrupt to find out when each requests has finished
- * 
- * although iderw() maintains a queue of requests, 
- * the simple IDE disk controller can only handle one operation at a time
+ * 将对磁盘的请求放进 idequeue 队列里，然后使用中断来找到哪个请求已经完成 ideintr()
+ * 虽然 iderw() 维护了一个磁盘请求的队列 idequeue，但是磁盘控制器一次也只能处理一个请求
  */
 void
 iderw(struct buf *b)
 {
   struct buf **pp;
 
-  if(!holdingsleep(&b->lock))
+  if(!holdingsleep(&b->lock)) /*磁盘操作前必须先拿到这个 buf 的锁*/
     panic("iderw: buf not locked");
-  if((b->flags & (B_VALID|B_DIRTY)) == B_VALID)
+  if((b->flags & (B_VALID|B_DIRTY)) == B_VALID) /*B_DIRTY = 0，即数据没有脏，不需要写回磁盘*/
     panic("iderw: nothing to do");
   if(b->dev != 0 && !havedisk1)
     panic("iderw: ide disk 1 not present");
@@ -182,7 +181,7 @@ iderw(struct buf *b)
 
   // Append b to idequeue.
   b->qnext = 0;
-  for(pp=&idequeue; *pp; pp=&(*pp)->qnext)  //DOC:insert-queue
+  for(pp=&idequeue; *pp; pp=&(*pp)->qnext) /*二级指针遍历链表*/
     ;
   *pp = b;
 
@@ -196,9 +195,7 @@ iderw(struct buf *b)
 
   // Wait for request to finish.
   /*
-   * polling does not make efficient use of the CPU.
-   * Instead,iderw() yields the CPU for other processes by sleeping,
-   * waiting for the interrupt handler to record in the buffer's flag that the operation is done
+   * 等待磁盘中断处理函数将 B_DIRTY 设置为 0，即该 buffer 的数据已经写入磁盘
    */
   while((b->flags & (B_VALID|B_DIRTY)) != B_VALID){
     sleep(b, &idelock);

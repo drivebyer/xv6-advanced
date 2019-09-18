@@ -150,6 +150,7 @@ lcr3(uint val)
 /*
  * 1. 当执行系统调用(INT指令)时, 首先INT指令配合硬件会保存一部分user register(%err~%ss)到kernel stack
  * 2. 然后调用trapasm.S/alltraps将下面的%edi~trapno保存进kernel stack
+ * 
  * 这两部分组成了trapframe
  * trapframe will eventually be restored(就是将内核栈上的数据恢复进相应寄存器), when system call returns.
  */
@@ -174,6 +175,10 @@ struct trapframe {
   ushort ds;
   ushort padding4;
   uint trapno; /*type of fault*/
+
+  // ///////////////////////////////////////
+  // 下面的寄存器是执行INT指令时硬件自动压入内核的
+  // ///////////////////////////////////////
 
   // below here defined by x86 hardware
   /*below here belong to INT saved, 说明INT指令需要hardware的支持*/

@@ -50,11 +50,13 @@ entry:
   orl     $(CR4_PSE), %eax
   movl    %eax, %cr4
   # Set page directory, V2P_WO将参数减去KERNBASE, 使之成为有效的物理地址
+  # 会面会在%cr0中设置CR0_PG位，这两个结合，说明开启了分页并MMU能通过CR3找到页目录
+  # 并能进行虚拟地址到物理地址的转换了
   movl    $(V2P_WO(entrypgdir)), %eax
   movl    %eax, %cr3
   # Turn on paging.
-  # xv6 sets the flag CRO_PG in %cr0, To enable the paging hardware
-  # 开启后, paging hardware将会使用entrypgdir
+  # xv6 sets the flag CR0_PG in %cr0, To enable the paging hardware
+  # 开启后, MMU将会通过CR3找到entrypgdir
   movl    %cr0, %eax
   orl     $(CR0_PG|CR0_WP), %eax /*write protect and paging*/
   movl    %eax, %cr0

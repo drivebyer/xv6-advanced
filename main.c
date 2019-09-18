@@ -26,13 +26,19 @@ main(void)
   kvmalloc();      // kernel page table
   mpinit();        // detect other processors
   lapicinit();     // interrupt controller
+  /*
+    设置当前CPU的GDT
+  */
   seginit();       // segment descriptors
   picinit();       // disable pic
   ioapicinit();    // another interrupt controller
   consoleinit();   // console hardware
   uartinit();      // serial port
+  /* 初始化全局进程锁 */
   pinit();         // process table
+  /* 设置中断描述符表 */
   tvinit();        // trap vectors
+  /* 初始化块设备缓冲区 */
   binit();         // buffer cache
   fileinit();      // file table
   /*initialize the disk driver*/

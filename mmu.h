@@ -16,10 +16,10 @@
 #define CR4_PSE         0x00000010      // Page size extension 
 
 // various segment selectors.
-#define SEG_KCODE 1  // kernel code
-#define SEG_KDATA 2  // kernel data+stack
-#define SEG_UCODE 3  // user code
-#define SEG_UDATA 4  // user data+stack
+#define SEG_KCODE 1  // kernel code，可执行和可读
+#define SEG_KDATA 2  // kernel data+stack，可写
+#define SEG_UCODE 3  // user code，可执行和可读性
+#define SEG_UDATA 4  // user data+stack，可写
 #define SEG_TSS   5  // this process's task state
 
 // cpu->gdt[NSEGS] holds the above segments.

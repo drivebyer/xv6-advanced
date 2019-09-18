@@ -32,13 +32,19 @@
 // Contents of the header block, used for both the on-disk header block
 // and to keep track in memory of logged block# before commit.
 struct logheader {
-  int n;
-  int block[LOGSIZE];
+  /*
+   * log header 后面 logged block 的数量
+   * 如果这个值为 0，则说明 log 区没有未完成的事务
+   * 如果非 0，表明 log 中有已经提交的完整事务，
+   */
+  int n; 
+  int block[LOGSIZE]; /*数组元素的值是被修改的block号*/
 };
 
+/* boot | super block | log header | logged block | ... | inode ...*/
 struct log {
   struct spinlock lock;
-  int start;
+  int start; /*Block number of the first log block*/
   int size;
   int outstanding; // how many FS sys calls are executing.
   int committing;  // in commit(), please wait.
@@ -72,9 +78,12 @@ install_trans(void)
   int tail;
 
   for (tail = 0; tail < log.lh.n; tail++) {
+    /*lbuf里是log中我们暂存的修改*/
     struct buf *lbuf = bread(log.dev, log.start+tail+1); // read log block
+    /*这是修改最终应该去到的block*/
     struct buf *dbuf = bread(log.dev, log.lh.block[tail]); // read dst
     memmove(dbuf->data, lbuf->data, BSIZE);  // copy block to dst
+    /*最终将修改写入磁盘*/
     bwrite(dbuf);  // write dst to disk
     brelse(lbuf);
     brelse(dbuf);
@@ -122,18 +131,19 @@ recover_from_log(void)
 }
 
 // called at the start of each FS system call.
+/*任何一个关于文件的操作都要以这个函数开始*/
 void
 begin_op(void)
 {
   acquire(&log.lock);
   while(1){
-    if(log.committing){
+    if(log.committing){ /*确保日志系统当前没有commit*/
       sleep(&log, &log.lock);
-    } else if(log.lh.n + (log.outstanding+1)*MAXOPBLOCKS > LOGSIZE){
+    } else if(log.lh.n + (log.outstanding+1)*MAXOPBLOCKS > LOGSIZE){ /*说明log区已经满了，睡眠等待其它操作完成*/
       // this op might exhaust log space; wait for commit.
       sleep(&log, &log.lock);
     } else {
-      log.outstanding += 1;
+      log.outstanding += 1; /*说明即将开始对文件进行操作，在log区为自己预留一块区域*/
       release(&log.lock);
       break;
     }
@@ -151,7 +161,7 @@ end_op(void)
   log.outstanding -= 1;
   if(log.committing)
     panic("log.committing");
-  if(log.outstanding == 0){
+  if(log.outstanding == 0){ /*如果所有由begin_op开始的操作都已经完成，就可以commit了*/
     do_commit = 1;
     log.committing = 1;
   } else {
@@ -181,8 +191,13 @@ write_log(void)
 
   for (tail = 0; tail < log.lh.n; tail++) {
     struct buf *to = bread(log.dev, log.start+tail+1); // log block
+    /*
+     * 记住log.lh.block[]中记录了所有修改过的buffer对应的block号
+     * 它们已经在cache中，即使调用bread()也是从缓存中取
+     */
     struct buf *from = bread(log.dev, log.lh.block[tail]); // cache block
     memmove(to->data, from->data, BSIZE);
+    /*先将修改后的block暂时存到磁盘log区*/
     bwrite(to);  // write the log
     brelse(from);
     brelse(to);
@@ -221,14 +236,20 @@ log_write(struct buf *b)
     panic("log_write outside of trans");
 
   acquire(&log.lock);
+  
   for (i = 0; i < log.lh.n; i++) {
+    /*
+     * 这个判断保证了即使有多个地方对block进行了修改，也只在 log.lh.block[] 中占一个位置
+     * 如果一个 block 被多个文件使用，当用户多不同文件操作时，其实对同一个 block 进行了多次操作
+     * 这就要求在 logheader 中只记录一次，这样也能节约 log 的空间
+     */
     if (log.lh.block[i] == b->blockno)   // log absorbtion
       break;
   }
-  log.lh.block[i] = b->blockno;
+  log.lh.block[i] = b->blockno; /*在logheader中记录下修改了哪个block*/
   if (i == log.lh.n)
     log.lh.n++;
-  b->flags |= B_DIRTY; // prevent eviction
+  b->flags |= B_DIRTY; /*标记为B_DIRTY，防止在bget中把这个buffer给其它块使用*/
   release(&log.lock);
 }
 

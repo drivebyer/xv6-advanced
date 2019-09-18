@@ -26,6 +26,10 @@ seginit(void)
   c->gdt[SEG_KDATA] = SEG(STA_W, 0, 0xffffffff, 0);
   c->gdt[SEG_UCODE] = SEG(STA_X|STA_R, 0, 0xffffffff, DPL_USER);
   c->gdt[SEG_UDATA] = SEG(STA_W, 0, 0xffffffff, DPL_USER);
+  /*
+    只是设置当前CPU到GDT
+    将c->gdt的地址（注意是虚拟地址）加载到GDTR寄存器中
+  */
   lgdt(c->gdt, sizeof(c->gdt));
 }
 
@@ -178,6 +182,9 @@ kvmalloc(void)
 
 // Switch h/w page table register to the kernel-only page table,
 // for when no process is running.
+/*
+  将kpgdir的物理地址加载进cr3寄存器
+*/
 void
 switchkvm(void)
 {
@@ -212,7 +219,7 @@ switchuvm(struct proc *p)
   mycpu()->gdt[SEG_TSS].s = 0;
   mycpu()->ts.ss0 = SEG_KDATA << 3;
   /*
-   * +-----+ <- cpu->te.esp0 ------+
+   * +-----+ <- cpu->ts.esp0 ------+
    * |  ss |                       |
    * +-----+                       |
    * | esp |                       |
@@ -227,21 +234,22 @@ switchuvm(struct proc *p)
    * +-----+                       |
    * | ..  |                       |
    * +-----+ <- p->kstack    ------+
-   * 
-   * */
-  mycpu()->ts.esp0 = (uint)p->kstack + KSTACKSIZE; /*此时esp0指向内核栈最高位置处*/
+   */
+  mycpu()->ts.esp0 = (uint)p->kstack + KSTACKSIZE; /*此时esp0指向内核栈最高位置处，即起始位置处*/
   // setting IOPL=0 in eflags *and* iomb beyond the tss segment limit
   // forbids I/O instructions (e.g., inb and outb) from user space
   mycpu()->ts.iomb = (ushort) 0xFFFF;
   ltr(SEG_TSS << 3); 
+
+  // 切换到目标进程的页目录，CR3寄存器存放的是页目录的物理地址
   lcr3(V2P(p->pgdir));  // switch to process's address space
   popcli();
 }
 
-
 // Load the initcode into address 0 of pgdir.
 // sz must be less than a page.
-/* inituvm() copy the binary into the new process's memory
+/* 
+ * inituvm() copy the binary into the new process's memory
  * and allocate one page of physical memory, 
  * and maps virtual address zero to that physical memory,
  * and copy the binary to that page
@@ -253,10 +261,17 @@ inituvm(pde_t *pgdir, char *init, uint sz)
 
   if(sz >= PGSIZE)
     panic("inituvm: more than a page");
-  mem = kalloc(); /*分配一页(4KB)的物理内存*/
+
+  /* 分配一页(4KB)的物理内存，来保存init二进制文件 */
+  mem = kalloc(); 
+  
   memset(mem, 0, PGSIZE); 
-  mappages(pgdir, 0, PGSIZE, V2P(mem), PTE_W|PTE_U); /*将虚拟地址映射到这块物理内存*/
-  memmove(mem, init, sz); /*将二进制文件拷贝到这一页物理内存上*/
+
+  /* 将init二进制文件所在的物理区域，映射到虚拟内存从0开始的空间 */
+  mappages(pgdir, 0, PGSIZE, V2P(mem), PTE_W|PTE_U); 
+  
+  /*将二进制文件拷贝到这一页物理内存上*/
+  memmove(mem, init, sz); 
 }
 
 // Load a program segment into pgdir.  addr must be page-aligned

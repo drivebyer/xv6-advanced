@@ -12,7 +12,7 @@ struct {
   struct proc proc[NPROC];
 } ptable;
 
-static struct proc *initproc;
+static struct proc *initproc; /* 这个全局变量在userinit()函数中赋值 */
 
 int nextpid = 1;
 extern void forkret(void);
@@ -23,6 +23,9 @@ static void wakeup1(void *chan);
 void
 pinit(void)
 {
+  /*
+    初始化进程全局变量进程锁
+  */
   initlock(&ptable.lock, "ptable");
 }
 
@@ -81,6 +84,8 @@ myproc(void) {
  * allocproc is written so that it can be used by fork
  * allocproc sets up the new process with a specially prepared kernel stack 
  * and set of kernel registers that cause it to "return" to user space when it first runs
+ * 
+ * 与linux kernel一样，每个进程有一个相应的内核栈
  */
 static struct proc*
 allocproc(void)
@@ -97,6 +102,10 @@ allocproc(void)
   release(&ptable.lock);
   return 0;
 
+  // ///////////////////
+  // 在进程表里找到一个进程
+  // ///////////////////
+
 found:
   p->state = EMBRYO; /*EMBRYO:萌芽*/
   p->pid = nextpid++;
@@ -109,6 +118,8 @@ found:
     p->state = UNUSED;
     return 0;
   }
+
+  // 记住sp的结束位置 
   sp = p->kstack + KSTACKSIZE;
 
   // Leave room for trap frame.
@@ -130,13 +141,14 @@ found:
   p->context = (struct context*)sp;
   memset(p->context, 0, sizeof *p->context);
 
-  /*由于内核线程开始执行的时候，会将p-context的内容拷贝进寄存器
-   *所以内核线程执行的第一个函数为forkret
+  /*
+   * 由于内核线程开始执行的时候，会将p-context的内容拷贝进寄存器
+   * 所以内核线程执行的第一个函数为forkret
    */
   p->context->eip = (uint)forkret;
   /*
   +------------+ <--- old_sp
-  | trapframe  |
+  | trapframe  | 假设这个进程是从用户态进来的，所以留有trapframe空间
   +------------+ <--- tf/new_sp1, trapframe里的值将会在上层函数userinit中设置好
   |  trapret   |
   +------------+ <--- new_sp2,the address that forkret will return to
@@ -147,10 +159,9 @@ found:
   |    edi     |
   +------------+ <--- new_sp3(p->context)
   |   empty    |  
-  +------------+ <--- kstack
-  old_sp - kstack = KSTACKSIZE(4096B)
-  */
+  +------------+ <--- p->kstack = kalloc()
 
+  */
   return p;
 }
 
@@ -169,9 +180,17 @@ userinit(void) /*这个函数只调用一次, 创建的init process是所有进�
   p = allocproc(); /*这个函数每次创建进程的时候都会调用*/
   
   initproc = p;
+
+  // 创建该进程内核空间页表相关的内容
   if((p->pgdir = setupkvm()) == 0) /*create a page table*/
     panic("userinit: out of memory?");
+  
+  // 创建该进程用户空间页表相关内容
+  // 这时已经决定了要载入initcode这个二进制文件了
+  // 由于目前xv6不支持文件系统，所以选择将这个二进制文件直接编译进内核，
+  // _binary_initcode_start和_binary_initcode_size描述的该二进制文件在内核镜像中的位置
   inituvm(p->pgdir, _binary_initcode_start, (int)_binary_initcode_size);
+  
   p->sz = PGSIZE;
   memset(p->tf, 0, sizeof(*p->tf));
 
@@ -182,8 +201,10 @@ userinit(void) /*这个函数只调用一次, 创建的init process是所有进�
   p->tf->ss = p->tf->ds;
   p->tf->eflags = FL_IF; /*this bit set to allow hardware interrupt*/
   
-  /*因为在上面的inituvm()函数中, 暂时只分配了一页物理内存, 映射到虚拟内存那也只有一页大小, 所以暂时有效虚拟地址范围为 0x0～0x1000*/
-  p->tf->esp = PGSIZE; /*紧接着segment后面就是user stack*/
+  // 因为在上面的inituvm()函数中, 暂时只分配了一页物理内存, 映射到虚拟内存那也只有一页大小, 
+  // 所以暂时有效虚拟地址范围为 0x0～0x1000，即initcode二进制文件存在与这一段空间
+  // 这里有点奇怪的是这里process image与用户栈相连？
+  p->tf->esp = PGSIZE; 
   p->tf->eip = 0; /*entry point of initcode.S, address 0*/
 
   safestrcpy(p->name, "initcode", sizeof(p->name)); /*p->name mainly for debugging*/
@@ -241,7 +262,6 @@ fork(void)
   if((np = allocproc()) == 0){
     return -1;
   }
-
   // Copy process state from proc.
   if((np->pgdir = copyuvm(curproc->pgdir, curproc->sz)) == 0){
     kfree(np->kstack);
@@ -251,26 +271,21 @@ fork(void)
   }
   np->sz = curproc->sz;
   np->parent = curproc;
-  *np->tf = *curproc->tf;
-
+  /*让子进程和父进程的trapframe相同，这样子进程回到用户空间后，才会和父进程回到的地方一样*/
+  *np->tf = *curproc->tf; 
   // Clear %eax so that fork returns 0 in the child.
   np->tf->eax = 0;
 
   for(i = 0; i < NOFILE; i++)
     if(curproc->ofile[i])
       np->ofile[i] = filedup(curproc->ofile[i]);
+
   np->cwd = idup(curproc->cwd);
-
   safestrcpy(np->name, curproc->name, sizeof(curproc->name));
-
   pid = np->pid;
-
   acquire(&ptable.lock);
-
   np->state = RUNNABLE;
-
   release(&ptable.lock);
-
   return pid;
 }
 
@@ -386,15 +401,22 @@ scheduler(void)
     // Loop over process table looking for process to run.
     acquire(&ptable.lock);
     for(p = ptable.proc; p < &ptable.proc[NPROC]; p++){
-      if(p->state != RUNNABLE) /*扫描进程表, 找到一个进程状态为RUNNABLE的进程*/
+      if(p->state != RUNNABLE) 
         continue;
+
+      // ////////////////////////////////
+      // 运行刚找到的进程状态为RUNNABLE的进程
+      // ////////////////////////////////
 
       // Switch to chosen process.  It is the process's job
       // to release ptable.lock and then reacquire it
       // before jumping back to us.
-      c->proc = p; /*将找到的进程设置为CPU当前执行的进程*/
 
-      /*在内核执行的时候切换页表是可以的, 因为在setupkvm()中将所有页表的内核映射都设置相同*/
+      // 将找到的进程设置为CPU当前执行的进程
+      c->proc = p; 
+
+      // 这里主要是为了切换到目标进程到页目录
+      // 在内核执行的时候切换页表是可以的, 因为在setupkvm()中将所有页表的内核映射都设置相同
       switchuvm(p); /*tell the hardware to start using the target process's page table*/
       p->state = RUNNING;
 
@@ -412,7 +434,6 @@ scheduler(void)
       c->proc = 0;
     }
     release(&ptable.lock);
-
   }
 }
 

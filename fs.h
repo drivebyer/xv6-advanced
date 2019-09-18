@@ -22,36 +22,36 @@ struct superblock {
 };
 
 #define NDIRECT 12
-#define NINDIRECT (BSIZE / sizeof(uint))
-#define MAXFILE (NDIRECT + NINDIRECT)
+#define NINDIRECT (BSIZE / sizeof(uint)) /* 128 */
+#define MAXFILE (NDIRECT + NINDIRECT) /* 12 + 128 */
 
-// On-disk inode structure
+// On-disk inode structure 这个结构体占用磁盘 64 字节
 struct dinode {
-  short type;           // File type
+  short type;           // File type  dinode free:0   T_DIR:1   T_FILE:2   T_DEV:3
   short major;          // Major device number (T_DEV only)
   short minor;          // Minor device number (T_DEV only)
-  short nlink;          // Number of links to inode in file system
-  uint size;            // Size of file (bytes)
-  uint addrs[NDIRECT+1];   // Data block addresses
+  short nlink;          /*表明有多少个 directory entry 链接到 inode，当这个数为 0 时，type也等于0*/
+  uint size;            /*inode所表示文件/目录字节数*/
+  uint addrs[NDIRECT+1];   /*表明inode表示的文件内容都在哪些block中*/
 };
 
-// Inodes per block.
-#define IPB           (BSIZE / sizeof(struct dinode))
+// Inodes per block. 512/64=8
+#define IPB           (BSIZE / sizeof(struct dinode)) 
 
 // Block containing inode i
 #define IBLOCK(i, sb)     ((i) / IPB + sb.inodestart)
 
 // Bitmap bits per block
-#define BPB           (BSIZE*8)
+#define BPB           (BSIZE*8) /*512*8 Bitmap bits per block*/
 
 // Block of free map containing bit for block b
-#define BBLOCK(b, sb) (b/BPB + sb.bmapstart)
+#define BBLOCK(b, sb) (b/BPB + sb.bmapstart) /*计算block b所在的位图的块号*/
 
 // Directory is a file containing a sequence of dirent structures.
 #define DIRSIZ 14
 
 struct dirent {
-  ushort inum;
-  char name[DIRSIZ];
+  ushort inum; // inode number
+  char name[DIRSIZ]; // DIRSIZ 14 文件名
 };
 

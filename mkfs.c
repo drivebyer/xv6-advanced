@@ -20,9 +20,9 @@
 // Disk layout:
 // [ boot block | sb block | log | inode blocks | free bit map | data blocks ]
 
-int nbitmap = FSSIZE/(BSIZE*8) + 1;
-int ninodeblocks = NINODES / IPB + 1;
-int nlog = LOGSIZE;
+int nbitmap = FSSIZE/(BSIZE*8) + 1; /*只需要 1 个位图，即一个block*/
+int ninodeblocks = NINODES / IPB + 1; /*需要26个inode block*/
+int nlog = LOGSIZE; /*30个block*/
 int nmeta;    // Number of meta blocks (boot, sb, nlog, inode, bitmap)
 int nblocks;  // Number of data blocks
 
@@ -52,6 +52,7 @@ xshort(ushort x)
   return y;
 }
 
+/*将字节逆序*/
 uint
 xint(uint x)
 {
@@ -91,16 +92,16 @@ main(int argc, char *argv[])
   }
 
   // 1 fs block = 1 disk sector
-  nmeta = 2 + nlog + ninodeblocks + nbitmap;
-  nblocks = FSSIZE - nmeta;
+  nmeta = 2 + nlog + ninodeblocks + nbitmap; /*2+30+26+1=59*/
+  nblocks = FSSIZE - nmeta; /*1000-59*/
 
-  sb.size = xint(FSSIZE);
-  sb.nblocks = xint(nblocks);
-  sb.ninodes = xint(NINODES);
-  sb.nlog = xint(nlog);
-  sb.logstart = xint(2);
-  sb.inodestart = xint(2+nlog);
-  sb.bmapstart = xint(2+nlog+ninodeblocks);
+  sb.size = xint(FSSIZE); /*1000个block*/
+  sb.nblocks = xint(nblocks); /*1000-59*/
+  sb.ninodes = xint(NINODES); /*200*/
+  sb.nlog = xint(nlog); /*30*/
+  sb.logstart = xint(2); /*日志从第二个block开始*/
+  sb.inodestart = xint(2+nlog); /*inode从第32个block开始*/
+  sb.bmapstart = xint(2+nlog+ninodeblocks); /*位图从第58个block开始*/
 
   printf("nmeta %d (boot, super, log blocks %u inode blocks %u, bitmap blocks %u) blocks %d total %d\n",
          nmeta, nlog, ninodeblocks, nbitmap, nblocks, FSSIZE);

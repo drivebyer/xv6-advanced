@@ -42,7 +42,7 @@ seta20.2:
   # effective memory map doesn't change during the transition.
   lgdt    gdtdesc
   movl    %cr0, %eax
-  orl     $CR0_PE, %eax           # enable protected mode
+  orl     $CR0_PE, %eax           # 启动保护模式
   movl    %eax, %cr0
 
 //PAGEBREAK!

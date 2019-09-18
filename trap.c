@@ -18,6 +18,8 @@ int mappages(pde_t *pgdir, void *va, uint size, uint pa, int perm);
 /*
  * set up the 256 entries in the IDT
  * tvinit: trap vector init
+ * 包括任务门（task gate），中断门（interrupt gate），陷阱门（trap gate）
+ * 其中陷阱门分开设置
  */
 void
 tvinit(void)
@@ -31,8 +33,7 @@ tvinit(void)
    * trap gate don not clear IF flag, allowing other interrupt during the system call handler
    * DLP_USER: allow a user program to generate the trap with an explicit int instruction
    * xv6 不允许用户程序通过int指令产生其他中断（例如 divice interrupt），用户程序只能使用int 64
-   * 如果使用了，就会产生保护异常，which goes to vector 13
-   * 说明在执行系统调用的时候允许被其他中断打断
+   * 如果使用了，就会产生保护异常，which goes to vector 13 说明在执行系统调用的时候允许被其他中断打断
    */
   SETGATE(idt[T_SYSCALL], 1, SEG_KCODE<<3, vectors[T_SYSCALL], DPL_USER);
 
